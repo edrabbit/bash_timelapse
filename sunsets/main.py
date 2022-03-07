@@ -1,9 +1,12 @@
 import astral
 from astral.sun import sun, golden_hour, SunDirection
 import datetime
+import glob
 import os
 import os.path
 import natsort
+import shutil
+
 
 
 class TLDirectory:
@@ -17,16 +20,15 @@ class TLDirectory:
         self.date = self.dt_from_dir() # datetime.date
         self.sun = self.get_sun_info() # dict with dawn, sunrise, noon, sunset, dusk
         self.goldenhour = self.get_golden_hour() #dict with 'start' and 'end' for golden hour
+        self.sunset_files = None
 
     def get_sun_info(self):
         city = astral.LocationInfo("San Francisco", "US", "America/Los_Angeles", 37.754444, -122.4425)
-        print((f"Location: {city.name}/{city.region}\n"))
         return sun(city.observer, date=self.date, tzinfo=city.timezone)
         # returns a dict with dawn, sunrise, noon, sunset, dusk
 
     def get_golden_hour(self):
         city = astral.LocationInfo("San Francisco", "US", "America/Los_Angeles", 37.754444, -122.4425)
-        print((f"Location: {city.name}/{city.region}\n"))
         gh = golden_hour(city.observer, self.date, direction=SunDirection.SETTING, tzinfo=city.timezone)
         goldenhour = {'start': gh[0], 'end': gh[1]}
         return goldenhour
@@ -36,6 +38,23 @@ class TLDirectory:
         d = [int(x) for x in self.name.split("-")[0].split("_")]
         dt = datetime.date(year=d[0], month=d[1], day=d[2])
         return dt
+
+    def get_sunset_images(self):
+        # filenames from timelapse cam: 192.168.1.99_01_20220305235955789_TIMING.jpg
+        # older ones have 192.168.1.208
+        #print(f'Date: {dir.date}')
+        #print(f'Sunset should be at {dir.sun["sunset"]}')
+        # We're doing shots every 10 seconds it looks like? So this should return multiple files
+        # If we ever move to >60 seconds, this won't work
+        s = self.sun["sunset"].strftime("%Y%m%d%H%M")
+        file_prefix = "*_01_"+s+"*.jpg"
+        #print(file_prefix)
+        files = natsort.natsorted(
+            glob.glob(os.path.join(self.path, file_prefix)))
+        if not files:
+            raise Exception("No sunset images found")
+        self.sunset_files = files
+        # currently this is "full" paths, but actually just relative
 
 class TLFiles:
     def __init__(self, tldirectory):
@@ -56,11 +75,20 @@ def get_all_directories(path="/Volumes/cam/ftp"):
     return all_dirs
 
 if __name__ == '__main__':
-    all_dirs = get_all_directories()
-    print("pause")
+    all_dirs = get_all_directories() # this should only have timelapse subdirs, other shit breaks it
+    # move the sunset files into a folder
+    dest = "sunset_files"
+
     for d in all_dirs:
-        print(d)
-        print("pause")
+        print(f"Processing: {d.path}")
+        d.get_sunset_images()
+        for f in d.sunset_files:
+            dest_path = os.path.join(dest, f.split("/")[-1])
+            if not os.path.exists(dest_path):
+                print(f"  Copying {f} to {dest_path}")
+                shutil.copy(f, dest_path)
+            else:
+                print(f"  Skipping {f}")
 
 
 
