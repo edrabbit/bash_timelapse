@@ -42,26 +42,31 @@ class TLDirectory:
     def get_sunset_images(self):
         # filenames from timelapse cam: 192.168.1.99_01_20220305235955789_TIMING.jpg
         # older ones have 192.168.1.208
-        #print(f'Date: {dir.date}')
-        #print(f'Sunset should be at {dir.sun["sunset"]}')
+        # At first I was using glob in here to get actual filenames acorss the network
+        # but that's hella slow, so lets just put together the list of wildcards and
+        # leave the network calls in other functions
+
         # We're doing shots every 10 seconds it looks like? So this should return multiple files
         # If we ever move to >60 seconds, this won't work
         s = self.sun["sunset"].strftime("%Y%m%d%H%M")
         file_prefix = "*_01_"+s+"*.jpg"
-        #print(file_prefix)
-        files = natsort.natsorted(
-            glob.glob(os.path.join(self.path, file_prefix)))
+        # for 5 minutes before and 5 minutes after, grab each shot for each minute. Do we want to go down and grab each shot for seconds?
+        s_before = int(s)-5
+        s_after = int(s)+5
+        files = []
+        for i in range(s_before, s_after+1, 1):
+            print(i)
+            for second in range(0,6,1):
+                file_prefix = "*_01_"+str(i)+str(second)+"*.jpg"
+                print(file_prefix)
+                #files.append(natsort.natsorted(
+                #    glob.glob(os.path.join(self.path, file_prefix))))
+                #files.append(
+                #    glob.glob(os.path.join(self.path, file_prefix))[0])
+                files.append(os.path.join(self.path, file_prefix))
         if not files:
             raise Exception("No sunset images found")
         self.sunset_files = files
-        # currently this is "full" paths, but actually just relative
-
-class TLFiles:
-    def __init__(self, tldirectory):
-        # tldirectory is a TLDirectory object
-        self.tldirectory = tldirectory
-# is this really what I want?
-
 
 
 def get_all_directories(path="/Volumes/cam/ftp"):
@@ -69,7 +74,8 @@ def get_all_directories(path="/Volumes/cam/ftp"):
     list_subfolders= [f.path for f in os.scandir(path) if f.is_dir()] # full path
     subfolders = natsort.natsorted(list_subfolders)
     all_dirs = []
-    for path in subfolders:
+    # CURRENTLY SET TO THE LAST 30 DAYS TO MAKE THIS EASIER TO WORK WITH
+    for path in subfolders[-30:]:
         tld = TLDirectory(path)
         all_dirs.append(tld)
     return all_dirs
@@ -77,18 +83,18 @@ def get_all_directories(path="/Volumes/cam/ftp"):
 if __name__ == '__main__':
     all_dirs = get_all_directories() # this should only have timelapse subdirs, other shit breaks it
     # move the sunset files into a folder
-    dest = "sunset_files"
-
+    dest = "sunset_files_20221205"
+    if not os.path.exists(dest):
+        os.mkdir(dest)
     for d in all_dirs:
         print(f"Processing: {d.path}")
         d.get_sunset_images()
         for f in d.sunset_files:
-            dest_path = os.path.join(dest, f.split("/")[-1])
+            fpath = glob.glob(f)[0]
+            dest_path = os.path.join(dest, fpath.split("/")[-1])
             if not os.path.exists(dest_path):
-                print(f"  Copying {f} to {dest_path}")
-                shutil.copy(f, dest_path)
+                print(f"  Copying {fpath} to {dest_path}")
+                shutil.copy(fpath, dest_path)
             else:
                 print(f"  Skipping {f}")
-
-
-
+            #break # just do one image
