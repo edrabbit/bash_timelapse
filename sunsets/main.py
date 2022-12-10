@@ -39,8 +39,10 @@ class TLDirectory:
         dt = datetime.date(year=d[0], month=d[1], day=d[2])
         return dt
 
-    def get_sunset_images(self):
-        # filenames from timelapse cam: 192.168.1.99_01_20220305235955789_TIMING.jpg
+    def get_sunset_images(self, number_of_minutes=1):
+        # number_of_minutes is the total number of minutes worth of frames to return,
+        # with the sunset in the middle
+        # Filenames from timelapse cam: 192.168.1.99_01_20220305235955789_TIMING.jpg
         # older ones have 192.168.1.208
         # At first I was using glob in here to get actual filenames acorss the network
         # but that's hella slow, so lets just put together the list of wildcards and
@@ -51,50 +53,72 @@ class TLDirectory:
         s = self.sun["sunset"].strftime("%Y%m%d%H%M")
         file_prefix = "*_01_"+s+"*.jpg"
         # for 5 minutes before and 5 minutes after, grab each shot for each minute. Do we want to go down and grab each shot for seconds?
-        s_before = int(s)-5
-        s_after = int(s)+5
+        s_before = self.sun["sunset"] + datetime.timedelta(minutes=(0-int(number_of_minutes/2)))
+        s_after = self.sun["sunset"] + datetime.timedelta(minutes=int(number_of_minutes/2))
         files = []
-        for i in range(s_before, s_after+1, 1):
-            print(i)
-            for second in range(0,6,1):
-                file_prefix = "*_01_"+str(i)+str(second)+"*.jpg"
-                print(file_prefix)
-                #files.append(natsort.natsorted(
-                #    glob.glob(os.path.join(self.path, file_prefix))))
-                #files.append(
-                #    glob.glob(os.path.join(self.path, file_prefix))[0])
-                files.append(os.path.join(self.path, file_prefix))
+        i = s_before
+        while i <= s_after:
+            file_prefix = "*_01_"+i.strftime("%Y%m%d%H%M%S")[:-1]+"*.jpg" #strip off the ones place for seconds
+            files.append(os.path.join(self.path, file_prefix))
+            i = i + datetime.timedelta(seconds=10)
+
         if not files:
             raise Exception("No sunset images found")
         self.sunset_files = files
 
 
-def get_all_directories(path="/Volumes/cam/ftp"):
+def get_all_directories(path="/Volumes/cam/ftp", last_x_days=0):
     # Return a list of TLDirectory objects for all the directories in 'path'
     list_subfolders= [f.path for f in os.scandir(path) if f.is_dir()] # full path
-    subfolders = natsort.natsorted(list_subfolders)
+    _subfolders = natsort.natsorted(list_subfolders)
     all_dirs = []
-    # CURRENTLY SET TO THE LAST 30 DAYS TO MAKE THIS EASIER TO WORK WITH
-    for path in subfolders[-30:]:
+    if last_x_days:
+        subfolders = _subfolders[(0-last_x_days):]
+    else:
+        subfolders = _subfolders
+    for path in subfolders:
         tld = TLDirectory(path)
         all_dirs.append(tld)
     return all_dirs
 
 if __name__ == '__main__':
-    all_dirs = get_all_directories() # this should only have timelapse subdirs, other shit breaks it
+    number_of_minutes = 15
+    all_dirs = get_all_directories(path="/Volumes/Timelapse/ftp", last_x_days=0) # this should only have timelapse subdirs, other shit breaks it
     # move the sunset files into a folder
-    dest = "sunset_files_20221205"
+    dest = "/Volumes/Timelapse/sunset_files"
+    # get a list of local files already downloaded
+    dest_file_list = os.listdir(dest)
     if not os.path.exists(dest):
         os.mkdir(dest)
+    i = 0
+    dir_count = len(all_dirs)
     for d in all_dirs:
-        print(f"Processing: {d.path}")
-        d.get_sunset_images()
-        for f in d.sunset_files:
-            fpath = glob.glob(f)[0]
-            dest_path = os.path.join(dest, fpath.split("/")[-1])
-            if not os.path.exists(dest_path):
-                print(f"  Copying {fpath} to {dest_path}")
-                shutil.copy(fpath, dest_path)
-            else:
-                print(f"  Skipping {f}")
-            #break # just do one image
+        i+=1
+        print(f"Processing: [{i}/{dir_count}] {d.path}")
+        d.get_sunset_images(number_of_minutes=number_of_minutes)
+        sunset_for_the_day = d.sun["sunset"].strftime("%Y%m%d%H%M")
+        print(f'..Sunset was at {sunset_for_the_day}')
+        # Check to see how many sunset images were downloaded for this day to see if we need to check it
+        res = list(filter(lambda x: sunset_for_the_day[:8] in x, dest_file_list))
+        expected_num_files = len(d.sunset_files)
+        if len(res) >= expected_num_files:
+            print(f'..Found {len(res)}/{expected_num_files} frames, skipping..')
+        else:
+            print(f'..Expected {expected_num_files} images found {len(res)}, downloading..')
+            i=1
+            for f in d.sunset_files:
+# IndexError: list index out of range
+                try:
+                    fpath = glob.glob(f)[0]
+                except IndexError:
+                    print(f"  Did not find {f}")
+                    continue
+                clean_dest_fname = fpath.split("/")[-1].replace("192.168.1.99_01_","")
+                dest_path = os.path.join(dest, clean_dest_fname)
+                if not os.path.exists(dest_path):
+                    print(f"  [{i}/{expected_num_files}] Copying {fpath} to {dest_path}")
+                    shutil.copy(fpath, dest_path)
+                else:
+                    print(f"  [{i}/{expected_num_files}] Skipping {fpath}")
+                i+=1
+                #break # just do one image
